@@ -21,4 +21,9 @@ Vocabulary/ORBvoc.txt
 build/
 *~
 lib/
+Examples/Custom/stereo_euroc_load
+Examples/Custom/stereo_euroc_save
+Examples/Custom/stereo_kitti_load
+Examples/Custom/stereo_kitti_save
+Maps/
 

@@ -188,7 +188,7 @@ public:
     static bool mbInitialComputations;
 
 
-private:
+//private:
 
     // Undistort keypoints given OpenCV distortion parameters.
     // Only for the RGB-D case. Stereo must be already rectified!

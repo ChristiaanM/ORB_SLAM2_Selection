@@ -201,7 +201,29 @@ public:
   double fx, fy, cx, cy, bf;
 };
 
+/**
+ * \brief 6D edge between two Vertex6
+ */
+class EdgeSE3Expmap : public BaseBinaryEdge<6, SE3Quat, VertexSE3Expmap, VertexSE3Expmap>{
+  public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+      EdgeSE3Expmap();
 
+    bool read(std::istream& is);
+
+    bool write(std::ostream& os) const;
+
+    void computeError()  {
+      const VertexSE3Expmap* v1 = static_cast<const VertexSE3Expmap*>(_vertices[0]);
+      const VertexSE3Expmap* v2 = static_cast<const VertexSE3Expmap*>(_vertices[1]);
+
+      SE3Quat C(_measurement);
+      SE3Quat error_= v2->estimate().inverse()*C*v1->estimate();
+      _error = error_.log();
+    }
+
+    virtual void linearizeOplus();
+};
 
 } // end namespace
 

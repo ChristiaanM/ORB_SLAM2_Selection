@@ -41,7 +41,7 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
     mvInvLevelSigma2(F.mvInvLevelSigma2), mnMinX(F.mnMinX), mnMinY(F.mnMinY), mnMaxX(F.mnMaxX),
     mnMaxY(F.mnMaxY), mK(F.mK), mvpMapPoints(F.mvpMapPoints), mpKeyFrameDB(pKFDB),
     mpORBvocabulary(F.mpORBvocabulary), mbFirstConnection(true), mpParent(NULL), mbNotErase(false),
-    mbToBeErased(false), mbBad(false), mHalfBaseline(F.mb/2), mpMap(pMap)
+    mbToBeErased(false), mbBad(false), mHalfBaseline(F.mb/2), mpMap(pMap), loaded(false)
 {
     mnId=nNextId++;
 
@@ -298,7 +298,8 @@ void KeyFrame::UpdateConnections()
     }
 
     //For all map points in keyframe check in which other keyframes are they seen
-    //Increase counter for those keyframes
+    //Increase counter for those keyframes 
+    
     for(vector<MapPoint*>::iterator vit=vpMP.begin(), vend=vpMP.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
@@ -319,7 +320,20 @@ void KeyFrame::UpdateConnections()
         }
     }
 
-    // This should not happen
+    //for(auto edge : mvMargEdges)
+    //{
+    //    KFcounter[edge.ref_kf]+=edge.cnt;
+    //}
+
+    // CJMuller - we introduce a small hack here to allow ORB-SLAM to deal with disconnected graphs.
+    // If the frame has a parent, add it into the map with a score of 1 - but only if it doesn't have 
+    // a value
+    if (mpParent != nullptr && mnId)
+    {
+       KFcounter.emplace(mpParent,1);
+    }
+    
+    // This should not happen - unless we are busy rebuilding the map
     if(KFcounter.empty())
         return;
 
@@ -338,7 +352,7 @@ void KeyFrame::UpdateConnections()
             nmax=mit->second;
             pKFmax=mit->first;
         }
-        if(mit->second>=th)
+        if(mit->second>=th || (mit->first == mpParent ))
         {
             vPairs.push_back(make_pair(mit->second,mit->first));
             (mit->first)->AddConnection(this,mit->second);
@@ -367,8 +381,10 @@ void KeyFrame::UpdateConnections()
         mConnectedKeyFrameWeights = KFcounter;
         mvpOrderedConnectedKeyFrames = vector<KeyFrame*>(lKFs.begin(),lKFs.end());
         mvOrderedWeights = vector<int>(lWs.begin(), lWs.end());
-
-        if(mbFirstConnection && mnId!=0)
+        
+        // CJMuller - add an extra check to ensure that we can only assign frames that are older than the current frame
+        // to be a parent. TODO: Rework this to loading code.
+        if(mbFirstConnection && mnId!=0) // && mnId > mvpOrderedConnectedKeyFrames.front()->mnId)
         {
             mpParent = mvpOrderedConnectedKeyFrames.front();
             mpParent->AddChild(this);
@@ -524,7 +540,10 @@ void KeyFrame::SetBadFlag()
                 mspChildrens.erase(pC);
             }
             else
+            {
+
                 break;
+            }
         }
 
         // If a children has no covisibility links with any parent candidate, assign to the original parent of this KF
@@ -618,7 +637,7 @@ cv::Mat KeyFrame::UnprojectStereo(int i)
     if(z>0)
     {
         const float u = mvKeys[i].pt.x;
-        const float v = mvKeys[i].pt.y;
+        const float v = mvKeys[i].pt.y;      
         const float x = (u-cx)*z*invfx;
         const float y = (v-cy)*z*invfy;
         cv::Mat x3Dc = (cv::Mat_<float>(3,1) << x, y, z);

@@ -22,6 +22,7 @@
 #ifndef SYSTEM_H
 #define SYSTEM_H
 
+#include <unistd.h>
 #include<string>
 #include<thread>
 #include<opencv2/core/core.hpp>
@@ -35,6 +36,8 @@
 #include "KeyFrameDatabase.h"
 #include "ORBVocabulary.h"
 #include "Viewer.h"
+
+#include "SelectionSettings.h"
 
 namespace ORB_SLAM2
 {
@@ -59,7 +62,7 @@ public:
 public:
 
     // Initialize the SLAM system. It launches the Local Mapping, Loop Closing and Viewer threads.
-    System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor, const bool bUseViewer = true);
+    System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor, const bool bUseViewer = true,  SelectionSettings sSettings = SelectionSettings(), size_t BAiters = 10 );
 
     // Proccess the given stereo frame. Images must be synchronized and rectified.
     // Input images: RGB (CV_8UC3) or grayscale (CV_8U). RGB is converted to grayscale.
@@ -113,7 +116,10 @@ public:
     void SaveTrajectoryKITTI(const string &filename);
 
     // TODO: Save/Load functions
-    // SaveMap(const string &filename);
+    void SaveBA(const string &filename);
+    void SavePoseGraph(const string &filename, const bool &bFixScale);
+    void SaveLoopCandidates(const string &filename);
+
     // LoadMap(const string &filename);
 
     // Information from most recent processed frame
@@ -122,7 +128,20 @@ public:
     std::vector<MapPoint*> GetTrackedMapPoints();
     std::vector<cv::KeyPoint> GetTrackedKeyPointsUn();
 
-private:
+
+    bool BusyCheck();
+
+    void PartialShutdown();
+    void SequentialRun();
+    void SequentialRunSetup();
+    void TrackingRun();
+    void SaveTrajectoryEx(const string &filename);
+    void SaveBow();
+
+    void GlobalBA(size_t iterations);
+    void WaitForLoopGBA();
+
+//private:
 
     // Input sensor
     eSensor mSensor;

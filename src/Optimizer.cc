@@ -46,13 +46,15 @@ void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopF
 }
 
 
-void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<MapPoint *> &vpMP,
+optimizerPtrType Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<MapPoint *> &vpMP,
                                  int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
 {
     vector<bool> vbNotIncludedMP;
     vbNotIncludedMP.resize(vpMP.size());
 
-    g2o::SparseOptimizer optimizer;
+    optimizerPtrType optPtr = std::unique_ptr<g2o::SparseOptimizer>(new g2o::SparseOptimizer());
+
+    g2o::SparseOptimizer &optimizer = *optPtr;
     g2o::BlockSolver_6_3::LinearSolverType * linearSolver;
 
     linearSolver = new g2o::LinearSolverEigen<g2o::BlockSolver_6_3::PoseMatrixType>();
@@ -183,11 +185,47 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
         }
     }
 
+    for(size_t i=0; i<vpKFs.size(); i++)
+    {
+        KeyFrame* pKF = vpKFs[i];
+        if(pKF->isBad())
+            continue;
+
+        for(auto edge : pKF->mvMargEdges)
+        {
+            if (edge.ref_kf->isBad())
+                continue;
+
+            cout << "ADDING MARG EDGE" << endl;
+
+            g2o::EdgeSE3Expmap* e = new g2o::EdgeSE3Expmap();
+            Eigen::Matrix<double,6,6,Eigen::RowMajor> info((double*)edge.info.data);
+            Eigen::Matrix<double, 6, 1> eigen_mat( (double*) edge.measurement.data);
+            g2o::SE3Quat mes(eigen_mat);
+
+            e->setVertex(0,dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(edge.ref_kf->mnId)));
+            e->setVertex(1,dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKF->mnId)));
+            e->setInformation(info);
+            e->setMeasurement(mes);
+
+            optimizer.addEdge(e);
+
+        }
+    }
+        
+
     // Optimize!
     optimizer.initializeOptimization();
     optimizer.optimize(nIterations);
 
-    // Recover optimized data
+
+
+
+    //stringstream ss;
+    //ss << "bundle" << rand() << ".g2o";
+    //optimizer.save(ss.str().c_str());
+
+    // Recover optimized data  
 
     //Keyframes
     for(size_t i=0; i<vpKFs.size(); i++)
@@ -233,7 +271,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
             pMP->mnBAGlobalForKF = nLoopKF;
         }
     }
-
+    return optPtr;
 }
 
 int Optimizer::PoseOptimization(Frame *pFrame)
@@ -450,7 +488,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     return nInitialCorrespondences-nBad;
 }
 
-void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap)
+optimizerPtrType Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap)
 {    
     // Local KeyFrames: First Breath Search from Current Keyframe
     list<KeyFrame*> lLocalKeyFrames;
@@ -504,7 +542,9 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     }
 
     // Setup optimizer
-    g2o::SparseOptimizer optimizer;
+    optimizerPtrType optPtr = std::unique_ptr<g2o::SparseOptimizer>(new g2o::SparseOptimizer());
+    g2o::SparseOptimizer &optimizer = *optPtr;
+
     g2o::BlockSolver_6_3::LinearSolverType * linearSolver;
 
     linearSolver = new g2o::LinearSolverEigen<g2o::BlockSolver_6_3::PoseMatrixType>();
@@ -654,11 +694,11 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
 
     if(pbStopFlag)
         if(*pbStopFlag)
-            return;
+            return optPtr;
 
     optimizer.initializeOptimization();
     optimizer.optimize(5);
-
+    
     bool bDoMore= true;
 
     if(pbStopFlag)
@@ -702,7 +742,6 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     }
 
     // Optimize again without the outliers
-
     optimizer.initializeOptimization(0);
     optimizer.optimize(10);
 
@@ -775,16 +814,20 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         pMP->SetWorldPos(Converter::toCvMat(vPoint->estimate()));
         pMP->UpdateNormalAndDepth();
     }
+    return optPtr;
 }
 
 
-void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* pCurKF,
+optimizerPtrType Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* pCurKF,
                                        const LoopClosing::KeyFrameAndPose &NonCorrectedSim3,
                                        const LoopClosing::KeyFrameAndPose &CorrectedSim3,
                                        const map<KeyFrame *, set<KeyFrame *> > &LoopConnections, const bool &bFixScale)
 {
     // Setup optimizer
-    g2o::SparseOptimizer optimizer;
+    optimizerPtrType optPtr = std::unique_ptr<g2o::SparseOptimizer>(new g2o::SparseOptimizer());
+    g2o::SparseOptimizer &optimizer = *optPtr;
+
+   
     optimizer.setVerbose(false);
     g2o::BlockSolver_7_3::LinearSolverType * linearSolver =
            new g2o::LinearSolverEigen<g2o::BlockSolver_7_3::PoseMatrixType>();
@@ -872,7 +915,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
             e->setMeasurement(Sji);
 
             e->information() = matLambda;
-
+            
             optimizer.addEdge(e);
 
             sInsertedEdges.insert(make_pair(min(nIDi,nIDj),max(nIDi,nIDj)));
@@ -917,8 +960,11 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
             e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nIDj)));
             e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nIDi)));
             e->setMeasurement(Sji);
-
             e->information() = matLambda;
+
+            // TODO: The following line segfaults in the essential graph ever contains 
+            // bad keyframes. This occurs due to the above call "optimizer.vertex(...)"
+            // TODO: add check? or warning           
             optimizer.addEdge(e);
         }
 
@@ -1041,6 +1087,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
 
         pMP->UpdateNormalAndDepth();
     }
+    return optPtr;
 }
 
 int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &vpMatches1, g2o::Sim3 &g2oS12, const float th2, const bool bFixScale)

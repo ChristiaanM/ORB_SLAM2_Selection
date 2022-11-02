@@ -31,14 +31,19 @@
 #include<mutex>
 #include<thread>
 
+#include <fstream>
+#include <iostream>
+
+#include <chrono>
+
 
 namespace ORB_SLAM2
 {
 
-LoopClosing::LoopClosing(Map *pMap, KeyFrameDatabase *pDB, ORBVocabulary *pVoc, const bool bFixScale):
+LoopClosing::LoopClosing(Map *pMap, KeyFrameDatabase *pDB, ORBVocabulary *pVoc, const bool bFixScale, size_t BAiters):
     mbResetRequested(false), mbFinishRequested(false), mbFinished(true), mpMap(pMap),
     mpKeyFrameDB(pDB), mpORBVocabulary(pVoc), mpMatchedKF(NULL), mLastLoopKFid(0), mbRunningGBA(false), mbFinishedGBA(true),
-    mbStopGBA(false), mpThreadGBA(NULL), mbFixScale(bFixScale), mnFullBAIdx(0)
+    mbStopGBA(false), mpThreadGBA(NULL), mbFixScale(bFixScale), mnFullBAIdx(0), mBAiters(BAiters)
 {
     mnCovisibilityConsistencyTh = 3;
 }
@@ -249,6 +254,21 @@ bool LoopClosing::ComputeSim3()
 
     int nCandidates=0; //candidates with enough matches
 
+    std::vector<LogEntryLoopCandidate> newLogEntries;
+    newLogEntries.resize(nInitialCandidates);
+    for(int i=0;i<nInitialCandidates;i++)
+    {
+        newLogEntries[i].mnFrameId =mpCurrentKF->mnFrameId; 
+        newLogEntries[i].mnKFId =  mpCurrentKF->mnId;
+        newLogEntries[i].mnMatchId = mvpEnoughConsistentCandidates[i]->mnFrameId;
+        newLogEntries[i].mnMatchKFId = mvpEnoughConsistentCandidates[i]->mnId;
+        newLogEntries[i].match_keyframe = mvpEnoughConsistentCandidates[i];
+    }
+
+
+    std::vector<std::vector<MapPoint*>> bowmatchBackup;
+    std::vector<MapPoint*> ransacBackup;
+
     for(int i=0; i<nInitialCandidates; i++)
     {
         KeyFrame* pKF = mvpEnoughConsistentCandidates[i];
@@ -263,8 +283,22 @@ bool LoopClosing::ComputeSim3()
         }
 
         int nmatches = matcher.SearchByBoW(mpCurrentKF,pKF,vvpMapPointMatches[i]);
+        newLogEntries[i].mnFeaturesBow = nmatches;
+        #ifdef YAML_LOOP_LOGS
+        bowmatchBackup.push_back(std::vector<MapPoint*>(vvpMapPointMatches[i].begin(),vvpMapPointMatches[i].end()));
 
-        if(nmatches<20)
+        /*newLogEntries[i].bowmappoints.reserve(nmatches);
+        for(size_t j=0;j<vvpMapPointMatches[i].size();j++)
+        {
+            if (vvpMapPointMatches[i][j] != nullptr)
+            {
+                newLogEntries[i].bowmappoints.push_back(vvpMapPointMatches[i][j]);
+            }
+        }*/
+        
+        #endif
+
+        if(nmatches<mnLoopBowTh) // 20
         {
             vbDiscarded[i] = true;
             continue;
@@ -272,7 +306,7 @@ bool LoopClosing::ComputeSim3()
         else
         {
             Sim3Solver* pSolver = new Sim3Solver(mpCurrentKF,pKF,vvpMapPointMatches[i],mbFixScale);
-            pSolver->SetRansacParameters(0.99,20,300);
+            pSolver->SetRansacParameters(0.99,mnLoopRansacTh,300); // 20
             vpSim3Solvers[i] = pSolver;
         }
 
@@ -280,6 +314,7 @@ bool LoopClosing::ComputeSim3()
     }
 
     bool bMatch = false;
+    int match_i = -1;
 
     // Perform alternatively RANSAC iterations for each candidate
     // until one is succesful or all fail
@@ -299,7 +334,7 @@ bool LoopClosing::ComputeSim3()
 
             Sim3Solver* pSolver = vpSim3Solvers[i];
             cv::Mat Scm  = pSolver->iterate(5,bNoMore,vbInliers,nInliers);
-
+            newLogEntries[i].mnFeaturesRansac = nInliers;
             // If Ransac reachs max. iterations discard keyframe
             if(bNoMore)
             {
@@ -310,6 +345,7 @@ bool LoopClosing::ComputeSim3()
             // If RANSAC returns a Sim3, perform a guided matching and optimize with all correspondences
             if(!Scm.empty())
             {
+                
                 vector<MapPoint*> vpMapPointMatches(vvpMapPointMatches[i].size(), static_cast<MapPoint*>(NULL));
                 for(size_t j=0, jend=vbInliers.size(); j<jend; j++)
                 {
@@ -324,11 +360,13 @@ bool LoopClosing::ComputeSim3()
 
                 g2o::Sim3 gScm(Converter::toMatrix3d(R),Converter::toVector3d(t),s);
                 const int nInliers = Optimizer::OptimizeSim3(mpCurrentKF, pKF, vpMapPointMatches, gScm, 10, mbFixScale);
+                newLogEntries[i].mnFeaturesOpt = nInliers;
 
                 // If optimization is succesful stop ransacs and continue
-                if(nInliers>=20)
+                if(nInliers>= mnLoopOptTh)
                 {
                     bMatch = true;
+                    match_i = i;
                     mpMatchedKF = pKF;
                     g2o::Sim3 gSmw(Converter::toMatrix3d(pKF->GetRotation()),Converter::toVector3d(pKF->GetTranslation()),1.0);
                     mg2oScw = gScm*gSmw;
@@ -346,6 +384,8 @@ bool LoopClosing::ComputeSim3()
         for(int i=0; i<nInitialCandidates; i++)
              mvpEnoughConsistentCandidates[i]->SetErase();
         mpCurrentKF->SetErase();
+
+        mvLoopCandidateLog.insert(mvLoopCandidateLog.end(),newLogEntries.begin(),newLogEntries.end());
         return false;
     }
 
@@ -371,6 +411,8 @@ bool LoopClosing::ComputeSim3()
         }
     }
 
+    ransacBackup =std::vector<MapPoint*>(mvpCurrentMatchedPoints.begin(),mvpCurrentMatchedPoints.end());
+
     // Find more matches projecting with the computed Sim3
     matcher.SearchByProjection(mpCurrentKF, mScw, mvpLoopMapPoints, mvpCurrentMatchedPoints,10);
 
@@ -381,12 +423,97 @@ bool LoopClosing::ComputeSim3()
         if(mvpCurrentMatchedPoints[i])
             nTotalMatches++;
     }
-
-    if(nTotalMatches>=40)
+    newLogEntries[match_i].mnFeaturesLocal = nTotalMatches;
+    
+    if(nTotalMatches>= mnLoopLocalTh)
     {
         for(int i=0; i<nInitialCandidates; i++)
             if(mvpEnoughConsistentCandidates[i]!=mpMatchedKF)
                 mvpEnoughConsistentCandidates[i]->SetErase();
+
+        
+    #ifdef YAML_LOOP_LOGS
+    {
+            std::cout << "log!" << std::endl;
+
+            auto& mappoints = mpMatchedKF->mvpMapPoints;
+            std::set<MapPoint*> bowSet;
+            std::set<MapPoint*> ransacSet;
+            std::set<MapPoint*> projSet;
+
+            for(MapPoint* ptr : bowmatchBackup[match_i])
+                if(ptr != nullptr)
+                    bowSet.insert(ptr);
+            
+            for(MapPoint* ptr: ransacBackup)
+                if(ptr != nullptr)
+                    ransacSet.insert(ptr);
+            
+            for(MapPoint* ptr: mvpCurrentMatchedPoints)
+            {
+                if(ptr != nullptr)
+                    projSet.insert(ptr);
+            }
+
+            newLogEntries[match_i].loopMatches.reserve(mappoints.size());
+            size_t cnt = 0;
+            for(size_t i=0;i<mappoints.size();i++)
+            {
+                if (mappoints[i] != nullptr &&  !(mappoints[i]->isBad()))
+                {
+                    LoopMatch entry;
+                    entry.mPointId = mappoints[i]->mnId;
+                    entry.mFound = mappoints[i]->GetFound();
+                    entry.mRatio = mappoints[i]->GetFoundRatio();
+                    entry.mObs = mappoints[i]->Observations();
+
+                    entry.mBowMatch = bowSet.find(mappoints[i]) != bowSet.end();
+                    entry.mRansacMatch = ransacSet.find(mappoints[i]) != ransacSet.end();
+                    entry.mSearchMatch = projSet.find(mappoints[i]) != projSet.end();
+                    auto descriptor = mpMatchedKF->mDescriptors.row(i);
+                    auto word = mpMatchedKF->mpORBvocabulary->getParentNode(mpMatchedKF->mpORBvocabulary->transform(descriptor),4);
+                    entry.mWord = word;
+                    entry.mWordCnt = 0;
+                    entry.mClosest = 256;
+                    auto search = mpMatchedKF->mFeatVec.find(word);
+                    if (search != mpMatchedKF->mFeatVec.end())
+                    {
+                        auto indices = search->second;
+                        entry.mWordCnt = indices.size();
+
+                        for(auto j : indices)
+                        {
+                            if (j != i)
+                            {
+                                const cv::Mat &descriptor_j = mpMatchedKF->mDescriptors.row(j);
+                                size_t dist = ORBmatcher::DescriptorDistance(descriptor,descriptor_j);
+                                if (dist < entry.mClosest)
+                                    entry.mClosest = dist;
+                            }
+                        }
+                        
+                    }
+       
+                    newLogEntries[match_i].loopMatches.push_back(entry);
+                    cnt++;
+                }
+
+            }
+            std::cout << "log entries" << cnt << std::endl;
+    }
+        #endif
+
+        mvLoopCandidateLog.insert(mvLoopCandidateLog.end(),newLogEntries.begin(),newLogEntries.end());
+        #ifdef YAML_LOOP_LOGS
+            for(int i=0; i<nInitialCandidates; i++)
+                mvpEnoughConsistentCandidates[i]->SetErase();
+            mpCurrentKF->SetErase();
+            return false;
+        #endif
+
+
+
+
         return true;
     }
     else
@@ -394,6 +521,8 @@ bool LoopClosing::ComputeSim3()
         for(int i=0; i<nInitialCandidates; i++)
             mvpEnoughConsistentCandidates[i]->SetErase();
         mpCurrentKF->SetErase();
+
+        mvLoopCandidateLog.insert(mvLoopCandidateLog.end(),newLogEntries.begin(),newLogEntries.end());
         return false;
     }
 
@@ -576,7 +705,7 @@ void LoopClosing::CorrectLoop()
     mbRunningGBA = true;
     mbFinishedGBA = false;
     mbStopGBA = false;
-    mpThreadGBA = new thread(&LoopClosing::RunGlobalBundleAdjustment,this,mpCurrentKF->mnId);
+    mpThreadGBA = new thread(&LoopClosing::RunGlobalBundleAdjustment,this,mpCurrentKF->mnId,mBAiters);
 
     // Loop closed. Release Local Mapping.
     mpLocalMapper->Release();    
@@ -642,13 +771,18 @@ void LoopClosing::ResetIfRequested()
     }
 }
 
-void LoopClosing::RunGlobalBundleAdjustment(unsigned long nLoopKF)
+void LoopClosing::RunGlobalBundleAdjustment(unsigned long nLoopKF, size_t iterations)
 {
-    cout << "Starting Global Bundle Adjustment" << endl;
+    cout << "Starting Global Bundle Adjustment - Iterations " << iterations << endl;
 
     int idx =  mnFullBAIdx;
-    Optimizer::GlobalBundleAdjustemnt(mpMap,10,&mbStopGBA,nLoopKF,false);
+    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+    
+    Optimizer::GlobalBundleAdjustemnt(mpMap,iterations,&mbStopGBA,nLoopKF,false); 
 
+    std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
+    double tba= std::chrono::duration_cast<std::chrono::duration<double> >(t2 - t1).count();
+    cout << "GBA Optimisation in " << tba << "seconds" <<endl;
     // Update all MapPoints and KeyFrames
     // Local Mapping was active during BA, that means that there might be new keyframes
     // not included in the Global BA and they are not consistent with the updated map.
@@ -772,5 +906,108 @@ bool LoopClosing::isFinished()
     return mbFinished;
 }
 
+void LoopClosing::saveLog(const string &filename)
+{
+    const char delim = ' ';
+
+    /*
+    struct LogEntryLoopCandidate
+    {
+        size_t mnFrameId = 0;
+        size_t mnKFId = 0;
+        size_t mnMatchId = 0;
+        size_t mnMatchKFId = 0;
+
+        size_t mnFeaturesBow = 0;
+        size_t mnFeaturesRansac = 0;
+        size_t mnFeaturesLocal = 0;
+    };
+
+    */
+
+    ofstream file;
+    file.open(filename);
+    if (file.is_open())
+    {
+        file << "#" 
+        << "FrameId" << delim
+        << "KFId" << delim
+        << "MatchFrameId" << delim
+        << "MatchKFId" << delim
+        << "FeaturesBow" << delim
+        << "FeaturesRansac" << delim 
+        << "FeaturesOpt" << delim
+        << "FeaturesLocal" << std::endl;;
+        
+        for(auto log : mvLoopCandidateLog)
+        {
+            file 
+            << log.mnFrameId << delim 
+            << log.mnKFId << delim 
+            << log.mnMatchId << delim 
+            << log.mnMatchKFId << delim 
+            << log.mnFeaturesBow << delim
+            << log.mnFeaturesRansac << delim
+            << log.mnFeaturesOpt << delim
+            << log.mnFeaturesLocal << std::endl;
+        }
+    }
+    file.close();
+    
+    #ifdef YAML_LOOP_LOGS
+    cv::FileStorage fs(filename+".yaml", cv::FileStorage::WRITE);
+    fs  << "Loops" << "[";
+
+
+    for(auto log : mvLoopCandidateLog)
+    {
+        fs << "{"
+        << "FrameId" << (int) log.mnFrameId 
+        << "KFId" << (int) log.mnKFId 
+        << "MatchFrameId" << (int)log.mnMatchId 
+        << "MatchKFId" << (int)log.mnMatchKFId 
+        << "FeaturesBow" << (int)log.mnFeaturesBow 
+        << "FeaturesOpt" << (int)log.mnFeaturesOpt;
+
+        
+        fs << "Matches" 
+        << "[";
+        
+        
+        if (log.loopMatches.size())
+        {
+            for(auto match : log.loopMatches)
+            {
+                fs << "{"
+                    << "id" << (int) match.mPointId 
+                    << "bow" << (int) match.mBowMatch
+                    << "ransac" << (int) match.mRansacMatch
+                    << "search" << (int) match.mSearchMatch
+                    << "found" << (int) match.mFound 
+                    << "ratio" << match.mRatio
+                    << "obs" << (int) match.mObs
+                    << "word4" <<(int) match.mWord
+                    << "wordcnt" << (int) match.mWordCnt
+                    << "closest" << (int) match.mClosest
+                    << "}";
+                    
+            }
+    
+        }
+        fs << "]" << "}";
+        
+
+
+
+    }
+
+
+
+    fs << "]";
+    #endif
+  
+
+
+}
 
 } //namespace ORB_SLAM

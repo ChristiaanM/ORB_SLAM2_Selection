@@ -28,9 +28,9 @@
 namespace ORB_SLAM2
 {
 
-LocalMapping::LocalMapping(Map *pMap, const float bMonocular):
+LocalMapping::LocalMapping(Map *pMap, const float bMonocular, SelectionSettings sSettings):
     mbMonocular(bMonocular), mbResetRequested(false), mbFinishRequested(false), mbFinished(true), mpMap(pMap),
-    mbAbortBA(false), mbStopped(false), mbStopRequested(false), mbNotStop(false), mbAcceptKeyFrames(true)
+    mbAbortBA(false), mbStopped(false), mbStopRequested(false), mbNotStop(false), mbAcceptKeyFrames(true), mSSettings(sSettings)
 {
 }
 
@@ -61,6 +61,7 @@ void LocalMapping::Run()
             ProcessNewKeyFrame();
 
             // Check recent MapPoints
+            //if (mbAllowCulling)
             MapPointCulling();
 
             // Triangulate new MapPoints
@@ -81,7 +82,8 @@ void LocalMapping::Run()
                     Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpMap);
 
                 // Check redundant local Keyframes
-                KeyFrameCulling();
+                if (mbAllowCulling)
+                    KeyFrameCulling();
             }
 
             mpLoopCloser->InsertKeyFrame(mpCurrentKeyFrame);
@@ -187,7 +189,8 @@ void LocalMapping::MapPointCulling()
         {
             lit = mlpRecentAddedMapPoints.erase(lit);
         }
-        else if(pMP->GetFoundRatio()<0.25f )
+        //else if(pMP->GetFoundRatio()<0.25f )
+        else if(pMP->GetFoundRatio()< mSSettings.mpCullVisRatio) 
         {
             pMP->SetBadFlag();
             lit = mlpRecentAddedMapPoints.erase(lit);
@@ -637,6 +640,8 @@ void LocalMapping::KeyFrameCulling()
     // We only consider close stereo points
     vector<KeyFrame*> vpLocalKeyFrames = mpCurrentKeyFrame->GetVectorCovisibleKeyFrames();
 
+    
+
     for(vector<KeyFrame*>::iterator vit=vpLocalKeyFrames.begin(), vend=vpLocalKeyFrames.end(); vit!=vend; vit++)
     {
         KeyFrame* pKF = *vit;
@@ -644,10 +649,27 @@ void LocalMapping::KeyFrameCulling()
             continue;
         const vector<MapPoint*> vpMapPoints = pKF->GetMapPointMatches();
 
-        int nObs = 3;
+        // int nObs = 3;
+        int nObs = mSSettings.kfCullPointThresh;
         const int thObs=nObs;
         int nRedundantObservations=0;
         int nMPs=0;
+
+        // CJMuller - Here we introduce a new check before we delete a keyframe. 
+        // We can only cull a keyframe, if it's children share a mappoint with the parent frame.
+        // Otherwise, the graph can become disconnected.
+        /*bool kfGraphCheck = false;
+        std::set<KeyFrame*> kfChildren = pKF->GetChilds();
+        for(KeyFrame * kf : kfChildren)
+        {
+            if (kf->GetWeight(pKF->mpParent) > 0)
+            {
+                kfGraphCheck = true;
+                break;
+            }
+        }*/
+        bool kfGraphCheck = true; // No longer needed - don't cull loaded frames for better benchmarking
+
         for(size_t i=0, iend=vpMapPoints.size(); i<iend; i++)
         {
             MapPoint* pMP = vpMapPoints[i];
@@ -690,7 +712,8 @@ void LocalMapping::KeyFrameCulling()
             }
         }  
 
-        if(nRedundantObservations>0.9*nMPs)
+        //if(nRedundantObservations>0.9*nMPs)
+        if(nRedundantObservations> mSSettings.kfCullRatio*nMPs && kfGraphCheck && (!pKF->loaded  || mSSettings.kfCullLoaded  == true  ))
             pKF->SetBadFlag();
     }
 }
@@ -756,5 +779,16 @@ bool LocalMapping::isFinished()
     unique_lock<mutex> lock(mMutexFinish);
     return mbFinished;
 }
+
+
+bool LocalMapping::SequentialResetStop()
+{
+    mbStopped = false;
+    mbStopRequested = false;
+    mbFinished = false;
+    return true;
+}
+
+
 
 } //namespace ORB_SLAM

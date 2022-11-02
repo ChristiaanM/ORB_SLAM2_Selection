@@ -52,6 +52,8 @@ public:
     std::vector<MapPoint*> GetAllMapPoints();
     std::vector<MapPoint*> GetReferenceMapPoints();
 
+    KeyFrame* GetFirstKeyframe();
+
     long unsigned int MapPointsInMap();
     long unsigned  KeyFramesInMap();
 

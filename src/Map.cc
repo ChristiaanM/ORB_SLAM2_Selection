@@ -130,4 +130,13 @@ void Map::clear()
     mvpKeyFrameOrigins.clear();
 }
 
+KeyFrame* Map::GetFirstKeyframe()
+{
+    unique_lock<mutex> lock(mMutexMap);
+    return *mspKeyFrames.begin();
+}
+
+
+
+
 } //namespace ORB_SLAM

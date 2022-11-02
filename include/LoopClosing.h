@@ -33,12 +33,53 @@
 #include <mutex>
 #include "Thirdparty/g2o/g2o/types/types_seven_dof_expmap.h"
 
+//#define LOWER_LOOP_THRESH
+
 namespace ORB_SLAM2
 {
 
 class Tracking;
 class LocalMapping;
 class KeyFrameDatabase;
+
+//#define YAML_LOOP_LOGS
+struct LoopMatch
+{
+    size_t mPointId;
+    size_t mFound;
+    float mRatio;
+    size_t mObs; 
+
+    bool mBowMatch;
+    bool mRansacMatch;
+    bool mSearchMatch;
+    size_t mWord;
+    size_t mWordCnt;
+    size_t mClosest;
+    
+
+};
+struct LogEntryLoopCandidate
+{
+    size_t mnFrameId = 0;
+    size_t mnKFId = 0;
+    size_t mnMatchId = 0;
+    size_t mnMatchKFId = 0;
+
+    size_t mnFeaturesBow = 0;
+    size_t mnFeaturesRansac = 0;
+    size_t mnFeaturesOpt = 0;
+    size_t mnFeaturesLocal = 0;
+
+    KeyFrame *match_keyframe = nullptr;
+    //std::vector<MapPoint*> bowmappoints;
+    //std::vector<MapPoint*> ransacmappoints;
+    std::vector<LoopMatch> loopMatches;
+};
+
+
+ 
+
 
 
 class LoopClosing
@@ -47,11 +88,11 @@ public:
 
     typedef pair<set<KeyFrame*>,int> ConsistentGroup;    
     typedef map<KeyFrame*,g2o::Sim3,std::less<KeyFrame*>,
-        Eigen::aligned_allocator<std::pair<const KeyFrame*, g2o::Sim3> > > KeyFrameAndPose;
+        Eigen::aligned_allocator<std::pair<KeyFrame* const, g2o::Sim3> > > KeyFrameAndPose;
 
 public:
 
-    LoopClosing(Map* pMap, KeyFrameDatabase* pDB, ORBVocabulary* pVoc,const bool bFixScale);
+    LoopClosing(Map* pMap, KeyFrameDatabase* pDB, ORBVocabulary* pVoc,const bool bFixScale, size_t BAiters);
 
     void SetTracker(Tracking* pTracker);
 
@@ -65,7 +106,7 @@ public:
     void RequestReset();
 
     // This function will run in a separate thread
-    void RunGlobalBundleAdjustment(unsigned long nLoopKF);
+    void RunGlobalBundleAdjustment(unsigned long nLoopKF, size_t iterations);
 
     bool isRunningGBA(){
         unique_lock<std::mutex> lock(mMutexGBA);
@@ -79,6 +120,8 @@ public:
     void RequestFinish();
 
     bool isFinished();
+
+    void saveLog(const string &filename);
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
@@ -144,6 +187,25 @@ protected:
 
 
     bool mnFullBAIdx;
+
+    // Loop-closure Data Log
+    std::deque<LogEntryLoopCandidate> mvLoopCandidateLog;
+
+
+    size_t mBAiters;
+    #ifdef LOWER_LOOP_THRESH 
+    size_t mnLoopBowTh = 10;
+    size_t mnLoopRansacTh = 10;
+    size_t mnLoopOptTh = 10;
+    size_t mnLoopLocalTh = 20;
+    #else
+    size_t mnLoopBowTh = 20;
+    size_t mnLoopRansacTh = 20;
+    size_t mnLoopOptTh = 20;
+    size_t mnLoopLocalTh = 40;
+    #endif
+
+    
 };
 
 } //namespace ORB_SLAM

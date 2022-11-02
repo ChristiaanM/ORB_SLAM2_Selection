@@ -30,6 +30,8 @@
 #include <mutex>
 
 
+#include "SelectionSettings.h"
+
 namespace ORB_SLAM2
 {
 
@@ -40,7 +42,7 @@ class Map;
 class LocalMapping
 {
 public:
-    LocalMapping(Map* pMap, const float bMonocular);
+    LocalMapping(Map* pMap, const float bMonocular, SelectionSettings sSettings);
 
     void SetLoopCloser(LoopClosing* pLoopCloser);
 
@@ -72,7 +74,11 @@ public:
         return mlNewKeyFrames.size();
     }
 
-protected:
+
+    bool SequentialResetStop();
+
+
+//protected:
 
     bool CheckNewKeyFrames();
     void ProcessNewKeyFrame();
@@ -121,6 +127,12 @@ protected:
 
     bool mbAcceptKeyFrames;
     std::mutex mMutexAccept;
+
+
+    bool mbAllowCulling;
+
+
+    SelectionSettings mSSettings;
 };
 
 } //namespace ORB_SLAM

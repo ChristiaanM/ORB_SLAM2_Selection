@@ -27,10 +27,10 @@
 #include "types_sba.h"
 #include <iostream>
 
+
 namespace g2o {
 
   using namespace std;
-
 
   VertexSBAPointXYZ::VertexSBAPointXYZ() : BaseVertex<3, Vector3d>()
   {

@@ -32,6 +32,7 @@
 #include <mutex>
 
 
+
 namespace ORB_SLAM2
 {
 
@@ -154,7 +155,7 @@ public:
     long unsigned int mnBAGlobalForKF;
 
     // Calibration parameters
-    const float fx, fy, cx, cy, invfx, invfy, mbf, mb, mThDepth;
+    float fx, fy, cx, cy, invfx, invfy, mbf, mb, mThDepth; // const float fx, fy, cx, cy, invfx, invfy, mbf, mb, mThDepth;
 
     // Number of KeyPoints
     const int N;
@@ -190,7 +191,7 @@ public:
 
 
     // The following variables need to be accessed trough a mutex to be thread safe.
-protected:
+//protected:
 
     // SE3 Pose and camera center
     cv::Mat Tcw;
@@ -231,6 +232,18 @@ protected:
     std::mutex mMutexPose;
     std::mutex mMutexConnections;
     std::mutex mMutexFeatures;
+
+    struct MargEdge
+    {
+        KeyFrame* ref_kf;
+        size_t cnt;
+        cv::Mat info;
+        cv::Mat measurement;
+    };
+
+    bool loaded;
+
+    std::vector<MargEdge> mvMargEdges;
 };
 
 } //namespace ORB_SLAM

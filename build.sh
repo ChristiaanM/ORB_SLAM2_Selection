@@ -1,3 +1,10 @@
+echo "Generating protoc"
+
+cd Thirdparty/osmap
+protoc --cpp_out=. osmap.proto
+cd ../..
+
+
 echo "Configuring and building Thirdparty/DBoW2 ..."
 
 cd Thirdparty/DBoW2
