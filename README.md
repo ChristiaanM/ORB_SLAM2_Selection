@@ -1,4 +1,5 @@
-This is a modified version of the ORB-SLAM 2 algorithm (https://github.com/raulmur/ORB_SLAM2) that uses custom version of Osmap (ORB-SLAM 2 serialisation) (https://github.com/AlejandroSilvestri/osmap) to save and load maps. This is intended to be used along MapSelect to test map point selection algorithms. This version of ORB-SLAM 2 includes changes to the baseline heuristics in ORB-SLAM aimed at evaluating map point selection algorithms. The included version of Osmap supports stereo map points and stores additional tracking information to improve performance. 
+This is a modified version of the [ORB-SLAM 2 algorithm](https://github.com/raulmur/ORB_SLAM2) that can be used with [MapSelect](https://github.com/ChristiaanM/MapSelect). This implementation uses a modified version of [Osmap (ORB-SLAM 2 serialisation)](https://github.com/AlejandroSilvestri/osmap) to save and load maps. This version of ORB-SLAM 2 includes changes to the baseline heuristics in ORB-SLAM aimed at facilitating the evaluating of map point selection algorithms. 
+
 
 # ORB-SLAM2
 **Authors:** [Raul Mur-Artal](http://webdiis.unizar.es/~raulmur/), [Juan D. Tardos](http://webdiis.unizar.es/~jdtardos/), [J. M. M. Montiel](http://webdiis.unizar.es/~josemari/) and [Dorian Galvez-Lopez](http://doriangalvez.com/) ([DBoW2](https://github.com/dorian3d/DBoW2))
